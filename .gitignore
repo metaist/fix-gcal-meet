@@ -1,0 +1,17 @@
+# general
+_ignore*
+_seed.py
+.venv
+*.db
+node_modules/
+
+# editors
+.idea
+.vim
+.vscode
+.DS_Store
+
+# build
+build/
+chrome/*.zip
+chrome/images/*.png

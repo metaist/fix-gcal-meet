@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# Use "strict mode" in bash to help debug your scripts.
+set -uo pipefail
+IFS=$'\n\t'
+
+# Find the location of this script.
+SCRIPT_PATH=$(readlink -f ${BASH_SOURCE[0]})
+SCRIPT_DIR=$(dirname $SCRIPT_PATH)
+SCRIPT_DESCRIPTION="Run dev commands."
+
+PATH_PROJECT=$(git rev-parse --show-toplevel)
+
+#### END OF STANDARD DEV HEADER ####
+
+dev_clean() { # delete generated outputs
+  echo "==> clean"
+  rm -rf "$PATH_PROJECT/build"
+  rm -rf "$PATH_PROJECT/chrome/images/*.png"
+}
+
+dev_icons() {  # generate chrome icons
+  local sizes=( 16 32 48 128 )
+  local size=""
+
+  echo "==> icons"
+  pushd "$PATH_PROJECT/chrome/images"
+    for size in "${sizes[@]}"; do
+      inkscape --export-width=$size --export-height=$size --export-filename="icon-${size}.png" calendar-link.svg
+    done
+  popd
+}
+
+dev_release() { # generate release package
+  local pkg_name=$(basename "$PATH_PROJECT")
+  local pkg_ver=$(jq -r .version $PATH_PROJECT/chrome/manifest.json)
+
+  echo "==> release $pkg_name ($pkg_ver)"
+  mkdir -p "$PATH_PROJECT/build"
+  pushd "$PATH_PROJECT/chrome"
+    zip -r "$PATH_PROJECT/build/${pkg_name}-${pkg_ver}.zip" *
+  popd
+}
+
+#### START OF STANDARD DEV FOOTER ####
+
+dev_help() { # list possible actions and exit
+  local regex='^dev[_-]([^(]*)\(\) *\{( *# *)?(.*)'
+  printf "$SCRIPT_DESCRIPTION\n\n"
+  printf "Usage: ./$(basename "$SCRIPT_PATH") ACTION [ACTION...] \n"
+  printf "\nPossible actions:\n"
+  for fn in $(grep -oP $regex $SCRIPT_PATH); do
+    if [[ $fn =~ $regex ]]; then
+      printf "  ${BASH_REMATCH[1]} - ${BASH_REMATCH[3]}\n";
+    fi
+  done
+}
+
+main() {
+  local arg=${1:-''}
+  if [[ "$arg" == "" ]]; then dev_all; exit; fi
+  if [[ "$arg" =~ ^(-h|--help)$ ]]; then dev_help; exit; fi
+  while [[ "$#" > 0 ]]; do dev_$1; shift 1; done
+}
+
+main $@
