@@ -1,56 +1,144 @@
+/**
+ * @file Injected into the top-level Google Calendar context.
+ * @copyright 2022 Metaist LLC
+ * @license MIT
+ */
+
 "use strict";
+
+/** Return a function that will be delayed when it runs. */
+const delayed =
+  (time, fn) =>
+  (...args) =>
+    setTimeout(() => fn(...args), time);
+
+/**
+ * Return a function that will only be called once per `time` period.
+ * @see https://webdesign.tutsplus.com/tutorials/javascript-debounce-and-throttle--cms-36783
+ */
+const throttled = (time, fn) => {
+  let paused = false;
+  return (...args) => {
+    if (paused) return;
+    paused = true;
+
+    setTimeout(() => {
+      paused = false;
+      fn(...args);
+    }, time);
+  };
+};
 
 let app = {
   debug: true,
   name: "fix-gcal-meet",
   lookup: {},
 
-  log: (...msg) => app.debug && console.log(...msg),
+  /** Log a debug message to the console. */
+  log: (...msg) => app.debug && console.debug(`${app.name}:`, ...msg),
 
+  /** Initialize the app. */
   init: () => {
-    // The accounts panel has all the accounts you're currently logged into.
-    let account = document.querySelector(`[aria-label="Account Information"]`);
-    let links = [].slice.call(account.querySelectorAll("a")).filter((a) => a.text.indexOf("@") > 0);
+    const main = document.body;
+    app.log("init", main);
 
-    links.forEach((link) => {
-      // The link itself has the `authuser` query parameter, but the corresponding email address
-      // is a bit further down in one of the grandchildren DOM nodes.
-      let uid = link.getAttribute("href").split("authuser=")[1];
-      let email = link.querySelector("div + div:last-child").innerText; // WARNING: maybe brittle
-      app.lookup[email] = uid;
-      app.log(`${app.name}: ${uid}: ${email}`);
+    // We listen for the account information coming back from the `iframe`.
+    window.addEventListener("message", app.onMessage);
+    app.loadAccounts();
+
+    const throttledUpdate = throttled(500, app.update);
+
+    // Many parts of the DOM change, but the `click` event if fairly reliable.
+    main.addEventListener("click", throttledUpdate);
+
+    // Notifications can cause parts of the DOM to change when there isn't a click event.
+    // @see https://github.com/adelespinasse/gcalcolor/blob/master/content.js
+    const observer = new MutationObserver(throttledUpdate);
+    observer.observe(main, {
+      childList: true,
+      attributes: false,
+      subtree: true,
     });
-
-    // We listen for all click events on the body because other parts of this app (e.g., `main`)
-    // are reloaded under conditions we can't reliably detect. We also insert a small delay after
-    // the click to give the meeting information panel to pop up.
-    let main = document.body;
-    main.addEventListener("click", () => setTimeout(app.click, 500));
-    app.log(`${app.name}: init`, main);
   },
 
-  click: () => {
-    app.log(`${app.name}: click`);
+  /** Ask for the account numbers and email addresses. */
+  loadAccounts: () => {
+    // We need to click on the accounts button to cause the accounts `iframe` to load.
+    const sel = `[aria-label^="Google Account"]`; // WARNING: brittle
+    const btn = document.querySelector(sel);
+    if (btn) btn.click(); // open panel
 
-    // You can respond "Yes", "No", or "Maybe" to an event.
-    // The choices you **didn't select** have the account email address encoded
-    // in an opaque JSON blob. Since this event is on your calendar, you probably
-    // didn't respond "No", so we look there.
-    let nobtn = document.querySelector(`[aria-label="Respond No"]`);
-    if (!nobtn) return;
+    // We need to wait a sec to close the panel.
+    delayed(1000, () => {
+      const btn = document.querySelector(sel);
+      if (btn) btn.click(); // close panel
+    })();
+  },
 
-    // We assume that the only email address will be encoded as a JSON string with quotes.
-    let blob = nobtn.getAttribute("jslog");
-    let email = blob.match(/"([^"]+@[^"]+)"/)[1];
-    // let email = JSON.parse(blob.split(";")[1].split(":")[1])[1]; // Alternative parsing.
-    let uid = app.lookup[email];
+  /** Receive account numbers and email addresses. */
+  onMessage: (event) => {
+    // app.log("message", event);
+    if (event.data && event.data.type === "accounts") {
+      app.lookup = event.data.data;
+      app.log("updated lookup table", app.lookup);
+      return;
+    }
+  },
 
-    let btn = document.querySelector(`[aria-label^="Join with Google Meet"]`);
-    if (!btn || uid === undefined) return;
+  /** Update the button. */
+  update: () => {
+    // First, there must be a "Join" button. Note that this is a brittle approach because
+    // the label can change (it has before) and it isn't internationalized.
+    const btn = document.querySelector(`[aria-label^="Join with Google Meet"]`); // WARNING: brittle
+    if (!btn) return;
+    if (btn.dataset._fixed) return; // already fixed
 
+    // Second, we need some way of getting the email address associated with the event.
+    let email = app.emailFromDialog() || app.emailFromButtons();
+    if (!email) return;
+
+    // Next, we convert that to the account id number.
+    const uid = app.lookup[email];
+    if (!uid) return;
+
+    // Finally, we update the button link.
     let url = btn.getAttribute("href").replace(/authuser=\d+/, `authuser=${uid}`);
     btn.setAttribute("href", url);
-    app.log(`${app.name}: updated`);
+
+    btn.dataset._fixed = true; // don't fix the same button again
+    app.log("button updated");
+  },
+
+  /** Return the email address in a `jslog` attribute. */
+  jslogEmail: (blob) => {
+    if (!blob) return;
+
+    // We assume that the only string with an `@` in the json blob is an email address.
+    let email = blob.match(/"([^"]+@[^"]+)"/)[1]; // WARNING: brittle
+    if (!email) email = JSON.parse(blob.split(";")[1].split(":")[1])[1]; // WARNING: brittle
+    return email;
+  },
+
+  /** Return the email address stored in the popup dialog. */
+  emailFromDialog: () => {
+    const dialog = document.querySelector("#xDetDlg"); // WARNING: brittle
+    if (!dialog) return;
+
+    const email = app.jslogEmail(dialog.getAttribute("jslog"));
+    // if (email) app.log("email from dialog", email);
+    return email;
+  },
+
+  /** Return the email associated with the RSVP buttons. */
+  emailFromButtons: () => {
+    // The "No" and "Maybe" buttons have the email address encoded in an opaque blob.
+    let btn = document.querySelector(`[aria-label^="Respond No"]`); // WARNING: brittle
+    if (!btn) document.querySelector(`[aria-label^="Respond Maybe"]`); // WARNING: brittle
+    if (!btn) return; // no rsvp button
+
+    const email = app.jslogEmail(btn.getAttribute("jslog"));
+    // if (email) app.log("email from buttons", email);
+    return email;
   },
 };
 
