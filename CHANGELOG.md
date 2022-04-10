@@ -17,6 +17,20 @@ These are changes that are on `main` that are not yet in `production`.
 
 ---
 
+[#1]: https://github.com/metaist/fix-gcal-meet/issues/1
+[#2]: https://github.com/metaist/fix-gcal-meet/issues/2
+[0.0.0.3]: https://github.com/metaist/fix-gcal-meet/compare/0.0.0.2...0.0.0.3
+
+## [0.0.0.3] - 2022-04-10T22:22:04Z
+
+**Added**
+
+- [#2]: update button when clicking on notification
+
+**Fixed**
+
+- [#1]: account switcher data is in an `iframe`
+
 [0.0.0.2]: https://github.com/metaist/fix-gcal-meet/commits/0.0.0.2
 
 ## [0.0.0.2] - 2022-01-12T17:21:56Z
